@@ -1,13 +1,6 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "cd frontend && npm install && npm run build",
   "outputDirectory": "frontend/dist",
   "framework": "vite",
-  "installCommand": "npm install --prefix frontend",
-  "rewrites": [
-    {
-      "source": "/api/:path*",
-      "destination": "https://backend-86quzgzy5-mogga1991s-projects.vercel.app/api/:path*"
-    }
-  ]
+  "installCommand": "npm install --prefix frontend"
 }
