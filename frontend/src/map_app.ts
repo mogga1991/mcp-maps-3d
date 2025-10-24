@@ -244,8 +244,17 @@ export enum ChatRole {
 
 export interface SavedProperty {
   property: Property;
-  rlpInfo: string;
+  rlpInfo: string; // Detailed RLP info extracted by AI
+  rlpSummary?: { // Quick reference summary
+    location?: string;
+    squareFootage?: string;
+    parking?: number;
+    spaceType?: string;
+    deadlines?: string[];
+  };
+  savedDate: string; // ISO date string
   notes: string;
+  status?: 'interested' | 'contacted' | 'awaiting_response' | 'declined';
 }
 
 // Google Maps API Key: Loaded from environment variable.
@@ -273,11 +282,13 @@ export class MapApp extends LitElement {
   @state() mapInitialized = false;
   @state() mapError = '';
   @state() savedProperties: SavedProperty[] = [];
+  @state() queuedFiles: File[] = []; // Files queued for upload
   @state() activeView: 'chat' | 'saved' = 'chat';
   @state() private showLayerControl = false;
   @state() private mapMode: 'hybrid' | 'roadmap' = 'hybrid';
   @state() isInitialState = true;
-  @state() private rlpRequirements: any = null;
+  @state() public rlpRequirements: any = null;
+  @state() private selectedProperty: Property | null = null;
 
   // Google Maps: Instance of the Google Maps 3D map.
   private map?: any;
@@ -515,7 +526,8 @@ You can find this constant near the top of the map_app.ts file.`;
     const thinkingDetails = document.createElement('details');
     const summary = document.createElement('summary');
     summary.textContent = 'Thinking process';
-    thinkingDetails.classList.add('thinking');
+    thinkingDetails.classList.add('thinking', 'hidden'); // Always hide thinking process
+    thinkingDetails.style.display = 'none'; // Never show thinking to user
     const thinkingElement = document.createElement('div');
     thinkingDetails.append(summary, thinkingElement);
     messageContent.append(thinkingDetails);
@@ -559,7 +571,7 @@ You can find this constant near the top of the map_app.ts file.`;
     this.scrollToTheEnd();
   }
 
-  private _displayPropertyResults(properties: Property[]) {
+  private async _displayPropertyResults(properties: Property[]) {
     this._clearMapElements('results');
     if (!this.Marker3DElement || !this.map) return;
 
@@ -567,11 +579,34 @@ You can find this constant near the top of the map_app.ts file.`;
 
     const bounds = new (window as any).google.maps.LatLngBounds();
 
-    properties.forEach((prop) => {
+    // Process properties sequentially to handle geocoding for missing coordinates
+    for (const prop of properties) {
       // Don't show a result marker if it's already saved
       if (this.savedPropertyMarkers.has(prop.name)) {
-        bounds.extend({lat: prop.latitude, lng: prop.longitude});
-        return;
+        if (prop.latitude && prop.longitude) {
+          bounds.extend({lat: prop.latitude, lng: prop.longitude});
+        }
+        continue;
+      }
+
+      // Skip properties with invalid coordinates and try to geocode
+      if (!prop.latitude || !prop.longitude || prop.latitude === 0 || prop.longitude === 0) {
+        console.warn(`Property "${prop.name}" has missing coordinates, attempting to geocode...`);
+        try {
+          const geocodeAddress = `${prop.address || prop.name}, ${prop.city || ''}, ${prop.state || ''}`.trim();
+          const geocoded = await this._geocodeAddress(geocodeAddress);
+          if (geocoded) {
+            prop.latitude = geocoded.lat;
+            prop.longitude = geocoded.lng;
+            console.log(`✓ Geocoded "${prop.name}" to ${prop.latitude}, ${prop.longitude}`);
+          } else {
+            console.error(`✗ Could not geocode "${prop.name}", skipping marker`);
+            continue;
+          }
+        } catch (e) {
+          console.error(`Error geocoding "${prop.name}":`, e);
+          continue;
+        }
       }
 
       const position = {lat: prop.latitude, lng: prop.longitude};
@@ -607,12 +642,12 @@ You can find this constant near the top of the map_app.ts file.`;
 
       marker.addEventListener('gmp-click', (event: any) => {
         event.stopPropagation();
-        this._openPropertyInfoWindow(marker, prop);
+        this.selectedProperty = prop;
       });
 
       this.propertyResultMarkers.set(prop.name, marker);
       bounds.extend(position);
-    });
+    }
 
     // Adjust camera to fit all property markers
     if (properties.length > 1) {
@@ -653,6 +688,31 @@ You can find this constant near the top of the map_app.ts file.`;
   }
 
   /**
+   * Geocodes an address to get latitude/longitude coordinates
+   */
+  private async _geocodeAddress(address: string): Promise<{lat: number, lng: number} | null> {
+    if (!this.geocoder) {
+      console.error('Geocoder not initialized');
+      return null;
+    }
+
+    try {
+      const result = await this.geocoder.geocode({address});
+      if (result.results && result.results.length > 0) {
+        const location = result.results[0].geometry.location;
+        return {
+          lat: location.lat(),
+          lng: location.lng()
+        };
+      }
+      return null;
+    } catch (error) {
+      console.error('Geocoding error:', error);
+      return null;
+    }
+  }
+
+  /**
    * Opens an info window for a property search result.
    */
   private _openPropertyInfoWindow(marker: any, property: Property) {
@@ -664,6 +724,16 @@ You can find this constant near the top of the map_app.ts file.`;
 
     const content = `
       <div class="info-window-content property-card">
+        ${property.images && property.images.length > 0 ? `
+          <div class="property-images">
+            <img src="${property.images[0]}" alt="${property.name}" class="property-main-image"
+                 onerror="this.style.display='none'" />
+            ${property.images.length > 1 ? `
+              <div class="property-image-count">+${property.images.length - 1} more</div>
+            ` : ''}
+          </div>
+        ` : ''}
+
         <div class="property-card-header">
           <h3>${property.name}</h3>
           <button class="save-toggle-button ${isSaved ? 'saved' : ''}"
@@ -747,9 +817,19 @@ You can find this constant near the top of the map_app.ts file.`;
     `;
 
     this.infoWindow.setContent(content);
-    // For 3D maps, we need to set position and open on the map
-    this.infoWindow.setPosition(marker.position);
-    this.infoWindow.open(this.map);
+    // For 3D maps, we need to set position and open with the map reference
+    const position = marker.position;
+    this.infoWindow.setPosition(position);
+
+    // For gmp-map-3d elements, we need to open the InfoWindow with a map option
+    // Create a temporary anchor to associate with the map
+    if (this.map) {
+      this.infoWindow.open({
+        map: this.map,
+        anchor: marker,
+        shouldFocus: false,
+      });
+    }
   }
 
   /**
@@ -854,6 +934,58 @@ You can find this constant near the top of the map_app.ts file.`;
     this.infoWindow.close();
   }
 
+  private _isPropertySaved(property: Property): boolean {
+    return this.savedProperties.some((p) => p.property.name === property.name);
+  }
+
+  private async _handleSaveProperty(property: Property) {
+    const isSaved = this._isPropertySaved(property);
+
+    if (isSaved) {
+      // Remove from saved properties
+      this.removeProperty(property.name);
+    } else {
+      // Save the property with RLP context
+      if (this.rlpRequirements) {
+        const newSavedProperty: SavedProperty = {
+          property: property,
+          rlpInfo: '', // Will be populated by AI extraction
+          rlpSummary: {
+            location: this.rlpRequirements.location || '',
+            squareFootage: this.rlpRequirements.squareFootage
+              ? `${this.rlpRequirements.squareFootage.min?.toLocaleString() || 0} - ${this.rlpRequirements.squareFootage.max?.toLocaleString() || 0} sq ft`
+              : '',
+            parking: this.rlpRequirements.parking || 0,
+            spaceType: this.rlpRequirements.spaceType || '',
+            deadlines: this.rlpRequirements.deadlines || []
+          },
+          savedDate: new Date().toISOString(),
+          notes: '',
+          status: 'interested'
+        };
+
+        // Trigger AI extraction if handler is available
+        if (this.savePropertyHandler) {
+          await this.savePropertyHandler(property);
+        } else {
+          // Fallback: save without AI extraction
+          this.addSavedProperty(newSavedProperty);
+        }
+      } else {
+        // No RLP context - save with minimal info
+        const newSavedProperty: SavedProperty = {
+          property: property,
+          rlpInfo: 'No RLP context available',
+          savedDate: new Date().toISOString(),
+          notes: '',
+          status: 'interested'
+        };
+        this.addSavedProperty(newSavedProperty);
+      }
+    }
+    this.requestUpdate();
+  }
+
   /**
    * Fly to a property by name and open its info window
    * Called from clickable property links in chat
@@ -876,11 +1008,11 @@ You can find this constant near the top of the map_app.ts file.`;
         durationMillis: 1500,
       });
 
-      // Open info window after camera animation
+      // Show property card after camera animation
       setTimeout(() => {
         const prop = (marker as any).propertyData;
         if (prop) {
-          this._openPropertyInfoWindow(marker, prop);
+          this.selectedProperty = prop;
         }
       }, 1600);
     }
@@ -917,6 +1049,13 @@ You can find this constant near the top of the map_app.ts file.`;
 
   async sendMessageAction() {
     if (this.chatState !== ChatState.IDLE) return;
+
+    // Check if we have queued files to process
+    if (this.queuedFiles.length > 0) {
+      await this._processQueuedFiles();
+      return;
+    }
+
     const msg = this.inputMessage.trim();
     if (msg.length === 0) return;
 
@@ -936,6 +1075,108 @@ You can find this constant near the top of the map_app.ts file.`;
     }
   }
 
+  private async _processQueuedFiles() {
+    const files = [...this.queuedFiles];
+    const fileCount = files.length;
+
+    // Clear the queue
+    this.queuedFiles = [];
+
+    // Add a user message showing all files being processed
+    const fileList = files.map(f => `<li>${f.name}</li>`).join('');
+    const userMsg = `
+      <div class="rlp-upload-status">
+        <div class="upload-header">
+          <strong>RLP Documents Received (${fileCount} file${fileCount > 1 ? 's' : ''})</strong>
+        </div>
+        <ul class="uploaded-files-list">
+          ${fileList}
+        </ul>
+        <div class="upload-loading-bar">
+          <div class="loading-bar-fill"></div>
+        </div>
+        <div class="upload-status-text">Comprehensively analyzing all documents, please wait...</div>
+      </div>
+    `;
+    const {textElement} = this.addMessage('user', userMsg);
+
+    try {
+      // Convert all files to base64 for AI processing
+      const filePromises = files.map(async (file) => {
+        const buffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.byteLength; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        return {
+          name: file.name,
+          mimeType: file.type,
+          data: btoa(binary)
+        };
+      });
+
+      const processedFiles = await Promise.all(filePromises);
+
+      // Send all files to AI for comprehensive analysis
+      const filesText = files.map(f => f.name).join(', ');
+      const analysisPrompt = `I am uploading ${fileCount} document${fileCount > 1 ? 's' : ''} related to a government RLP (Request for Lease Proposals): ${filesText}
+
+These documents may include the main RLP, amendments, floor plans, Q&A addendums, site visit notes, technical specifications, and other critical information.
+
+CRITICAL INSTRUCTIONS:
+1. Read and analyze ALL ${fileCount} documents thoroughly
+2. Extract and synthesize ALL requirements from across all documents
+3. Pay special attention to:
+   - Location requirements and boundaries
+   - Square footage and parking requirements
+   - Special requirements (accessibility, safety, seismic, sustainability, renovations, 24/7 access)
+   - Deadlines and key dates
+   - Terms and conditions
+   - Any amendments or clarifications in supplemental documents
+   - Technical specifications
+   - Government contact information
+
+4. If there are conflicting requirements between documents, note the most recent/amended version
+5. Create a comprehensive summary that ensures we miss NOTHING that could cost us the contract
+
+Remember: This is for a competitive government contract. Missing ANY requirement from ANY document could disqualify our proposal. Be exhaustive in your analysis.`;
+
+      // Send all PDFs to AI via the message handler
+      await this.sendMessageHandler({
+        isPDF: true,
+        isMultiFile: true,
+        fileCount: fileCount,
+        fileNames: files.map(f => f.name),
+        text: analysisPrompt,
+        inlineData: processedFiles.map(f => ({mimeType: f.mimeType, data: f.data}))
+      }, 'user');
+
+      // Update to completed state
+      textElement.innerHTML = `
+        <div class="rlp-upload-status completed">
+          <div class="upload-header">
+            <strong>✓ All RLP Documents Analyzed Successfully</strong>
+          </div>
+          <ul class="uploaded-files-list">
+            ${fileList}
+          </ul>
+        </div>
+      `;
+
+    } catch (error) {
+      console.error('Error processing files:', error);
+      textElement.innerHTML = `
+        <div class="rlp-upload-status error">
+          <div class="upload-header">
+            <strong>✗ Analysis Failed</strong>
+          </div>
+          <div class="upload-status-text">${error.message}</div>
+        </div>
+      `;
+    }
+  }
+
   private async inputKeyDownAction(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -951,6 +1192,20 @@ You can find this constant near the top of the map_app.ts file.`;
     this.activeView = view;
   }
 
+  private _handleLogout() {
+    console.log('🚪 Logout button clicked!');
+
+    // Call the global logout handler if it exists (set by auth integration)
+    if ((window as any).handleLogout) {
+      console.log('✅ Calling auth logout handler');
+      (window as any).handleLogout();
+    } else {
+      // Fallback: show alert for testing
+      console.log('⚠️ No auth handler configured yet');
+      alert('Logout clicked! Auth system not yet configured.\n\nTo enable: Follow QUICKSTART_AUTH.md');
+    }
+  }
+
   private renderUploadPrompt() {
     return html`
       <div class="upload-prompt-container">
@@ -958,8 +1213,11 @@ You can find this constant near the top of the map_app.ts file.`;
           <label for="rlp-upload" class="upload-label">
             <div class="upload-box-icon">${ICON_UPLOAD_CLOUD}</div>
             <div class="upload-box-text">
-              <strong>Upload your RLP document to begin</strong>
-              <span>Drag & drop or click to browse</span>
+              <strong>Upload your RLP documents to begin</strong>
+              <span>Select multiple files - RLP, amendments, floor plans, Q&A, etc.</span>
+              <small style="display: block; margin-top: 8px; color: var(--color-text-secondary);">
+                Comprehensive analysis of all documents ensures nothing is missed
+              </small>
             </div>
           </label>
           <input
@@ -967,6 +1225,7 @@ You can find this constant near the top of the map_app.ts file.`;
             type="file"
             class="hidden"
             accept=".txt,.md,.pdf"
+            multiple
             @change=${this._handleFileSelect} />
         </div>
       </div>
@@ -978,67 +1237,28 @@ You can find this constant near the top of the map_app.ts file.`;
     if (!input.files || input.files.length === 0) {
       return;
     }
-    const file = input.files[0];
 
-    // Immediately switch from upload view to chat view
-    this.isInitialState = false;
-    await this.updateComplete; // Wait for the DOM to update
+    // Queue the files instead of auto-processing
+    const newFiles = Array.from(input.files);
+    this.queuedFiles = [...this.queuedFiles, ...newFiles];
 
-    // Add a user message with loading state
-    const userMsg = `
-      <div class="rlp-upload-status">
-        <div class="upload-header">
-          <strong>RLP Received</strong>
-        </div>
-        <div class="upload-loading-bar">
-          <div class="loading-bar-fill"></div>
-        </div>
-        <div class="upload-status-text">Analyzing file, please wait...</div>
-      </div>
-    `;
-    const {textElement} = this.addMessage('user', userMsg);
-
-    try {
-      // Upload to backend API
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await fetch('http://localhost:3003/api/rlp/upload', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error(`Upload failed: ${response.statusText}`);
-      }
-
-      const result = await response.json();
-
-      // Update to completed state
-      textElement.innerHTML = `
-        <div class="rlp-upload-status completed">
-          <div class="upload-header">
-            <strong>✓ RLP Analyzed Successfully</strong>
-          </div>
-        </div>
-      `;
-
-      // Store the requirements locally for future property searches
-      const {requirements} = result.data;
-      this.rlpRequirements = requirements;
-      console.log('RLP requirements stored:', this.rlpRequirements);
-
-    } catch (error) {
-      console.error('Error uploading file:', error);
-      textElement.innerHTML = `
-        <div class="rlp-upload-status error">
-          <div class="upload-header">
-            <strong>✗ Upload Failed</strong>
-          </div>
-          <div class="upload-status-text">${error.message}</div>
-        </div>
-      `;
+    // Switch from upload view to chat view if needed
+    if (this.isInitialState) {
+      this.isInitialState = false;
     }
+
+    // Clear the input so the same file can be selected again if needed
+    input.value = '';
+
+    this.requestUpdate();
+  }
+
+  private _removeQueuedFile(index: number) {
+    this.queuedFiles = this.queuedFiles.filter((_, i) => i !== index);
+  }
+
+  private _clearQueuedFiles() {
+    this.queuedFiles = [];
   }
 
   render() {
@@ -1112,10 +1332,56 @@ You can find this constant near the top of the map_app.ts file.`;
                             : ''}
                         </div>
 
-                        <!-- RLP Info Card -->
+                        <!-- RLP Summary Card (Quick Reference) -->
+                        ${item.rlpSummary ? html`
+                          <div class="saved-property-card rlp-summary-card">
+                            <div class="saved-property-header">
+                              <h4>RLP Requirements Summary</h4>
+                            </div>
+                            <div class="rlp-summary-grid">
+                              ${item.rlpSummary.location ? html`
+                                <div class="rlp-summary-item">
+                                  <span class="rlp-summary-label">Location:</span>
+                                  <span class="rlp-summary-value">${item.rlpSummary.location}</span>
+                                </div>
+                              ` : ''}
+                              ${item.rlpSummary.squareFootage ? html`
+                                <div class="rlp-summary-item">
+                                  <span class="rlp-summary-label">Size:</span>
+                                  <span class="rlp-summary-value">${item.rlpSummary.squareFootage}</span>
+                                </div>
+                              ` : ''}
+                              ${item.rlpSummary.parking ? html`
+                                <div class="rlp-summary-item">
+                                  <span class="rlp-summary-label">Parking:</span>
+                                  <span class="rlp-summary-value">${item.rlpSummary.parking} spaces</span>
+                                </div>
+                              ` : ''}
+                              ${item.rlpSummary.spaceType ? html`
+                                <div class="rlp-summary-item">
+                                  <span class="rlp-summary-label">Space Type:</span>
+                                  <span class="rlp-summary-value">${item.rlpSummary.spaceType}</span>
+                                </div>
+                              ` : ''}
+                              ${item.rlpSummary.deadlines && item.rlpSummary.deadlines.length > 0 ? html`
+                                <div class="rlp-summary-item full-width">
+                                  <span class="rlp-summary-label">Key Deadlines:</span>
+                                  <span class="rlp-summary-value">${item.rlpSummary.deadlines.slice(0, 2).join('; ')}</span>
+                                </div>
+                              ` : ''}
+                            </div>
+                            ${item.savedDate ? html`
+                              <div class="saved-date">
+                                <small>Saved: ${new Date(item.savedDate).toLocaleDateString()}</small>
+                              </div>
+                            ` : ''}
+                          </div>
+                        ` : ''}
+
+                        <!-- RLP Info Card (Detailed AI Extraction) -->
                         <div class="saved-property-card rlp-info-card">
                           <div class="saved-property-header">
-                            <h4>RLP Information</h4>
+                            <h4>RLP Details & Follow-up Info</h4>
                           </div>
                           <div class="rlp-content">
                             ${
@@ -1160,6 +1426,40 @@ You can find this constant near the top of the map_app.ts file.`;
           <span>Filters</span>
         </button>
       </div>
+      ${this.rlpRequirements ? html`
+        <div class="rlp-summary">
+          <div class="rlp-summary-header">
+            <strong>RLP Requirements Summary</strong>
+            <button class="rlp-summary-close" @click=${() => this.rlpRequirements = null}>×</button>
+          </div>
+          <div class="rlp-summary-content">
+            <div class="rlp-summary-row">
+              <span class="rlp-label">Location:</span>
+              <span class="rlp-value">${this.rlpRequirements.location || 'Not specified'}</span>
+            </div>
+            <div class="rlp-summary-row">
+              <span class="rlp-label">Size:</span>
+              <span class="rlp-value">${this.rlpRequirements.squareFootage ?
+                `${this.rlpRequirements.squareFootage.min?.toLocaleString() || 0} - ${this.rlpRequirements.squareFootage.max?.toLocaleString() || 0} sq ft` :
+                'Not specified'}</span>
+            </div>
+            <div class="rlp-summary-row">
+              <span class="rlp-label">Parking:</span>
+              <span class="rlp-value">${this.rlpRequirements.parking ? `${this.rlpRequirements.parking} spaces` : 'Not specified'}</span>
+            </div>
+            <div class="rlp-summary-row">
+              <span class="rlp-label">Space Type:</span>
+              <span class="rlp-value">${this.rlpRequirements.spaceType || 'Not specified'}</span>
+            </div>
+            ${this.rlpRequirements.specialRequirements && this.rlpRequirements.specialRequirements.length > 0 ? html`
+              <div class="rlp-summary-row">
+                <span class="rlp-label">Key Requirements:</span>
+                <span class="rlp-value">${this.rlpRequirements.specialRequirements.slice(0, 3).join('; ')}</span>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      ` : ''}
       <div class="chat-messages" aria-live="polite" aria-atomic="false">
         ${this.isInitialState ? this.renderUploadPrompt() : this.messages}
         <div id="anchor"></div>
@@ -1173,9 +1473,32 @@ You can find this constant near the top of the map_app.ts file.`;
             ? html`<div class="spinner"></div>`
             : ''}
           ${this.chatState === ChatState.GENERATING ? html`Generating...` : ''}
-          ${this.chatState === ChatState.THINKING ? html`Thinking...` : ''}
           ${this.chatState === ChatState.EXECUTING ? html`Executing...` : ''}
         </div>
+        ${this.queuedFiles.length > 0 ? html`
+          <div class="queued-files-container">
+            <div class="queued-files-header">
+              <span>${this.queuedFiles.length} file${this.queuedFiles.length > 1 ? 's' : ''} ready to analyze</span>
+              <button class="clear-files-button" @click=${this._clearQueuedFiles} title="Clear all files">
+                Clear all
+              </button>
+            </div>
+            <div class="queued-files-list">
+              ${this.queuedFiles.map((file, index) => html`
+                <div class="queued-file-item">
+                  <span class="file-icon">📄</span>
+                  <span class="file-name">${file.name}</span>
+                  <button
+                    class="remove-file-button"
+                    @click=${() => this._removeQueuedFile(index)}
+                    title="Remove file">
+                    ✕
+                  </button>
+                </div>
+              `)}
+            </div>
+          </div>
+        ` : ''}
         <div id="inputArea" role="form" aria-labelledby="message-input-label">
           <label id="message-input-label" class="hidden"
             >Search for properties</label
@@ -1252,7 +1575,11 @@ You can find this constant near the top of the map_app.ts file.`;
               title="Settings">
               ${ICON_SETTINGS}
             </button>
-            <button class="sidebar-button" aria-label="Logout" title="Logout">
+            <button
+              class="sidebar-button"
+              aria-label="Logout"
+              title="Logout"
+              @click=${this._handleLogout}>
               ${ICON_LOGOUT}
             </button>
           </div>
@@ -1323,6 +1650,110 @@ You can find this constant near the top of the map_app.ts file.`;
               default-ui-hidden="true"
               role="application">
             </gmp-map-3d>
+
+            <!-- Property Card Overlay -->
+            ${this.selectedProperty ? html`
+              <div class="property-card-overlay" @click=${() => this.selectedProperty = null}>
+                <div class="property-card-container" @click=${(e: Event) => e.stopPropagation()}>
+                  ${this.selectedProperty.images && this.selectedProperty.images.length > 0 ? html`
+                    <div class="property-card-images">
+                      <img src="${this.selectedProperty.images[0]}" alt="${this.selectedProperty.name}"
+                           onerror="this.style.display='none'" />
+                    </div>
+                  ` : ''}
+
+                  <div class="property-card-content">
+                    <div class="property-card-header-row">
+                      <h2>${this.selectedProperty.name}</h2>
+                      <div class="card-header-buttons">
+                        <button
+                          class="save-property-button ${this._isPropertySaved(this.selectedProperty) ? 'saved' : ''}"
+                          @click=${() => this._handleSaveProperty(this.selectedProperty)}
+                          title="${this._isPropertySaved(this.selectedProperty) ? 'Unsave property' : 'Save property'}">
+                          ${this._isPropertySaved(this.selectedProperty) ? ICON_HEART_FILLED : ICON_HEART_OUTLINE}
+                        </button>
+                        <button class="close-card-button" @click=${() => this.selectedProperty = null}>
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+
+                    ${this.selectedProperty.propertyType ? html`
+                      <div class="property-type-badge-large">${this.selectedProperty.propertyType}</div>
+                    ` : ''}
+
+                    <div class="property-card-details">
+                      ${this.selectedProperty.price ? html`
+                        <div class="detail-row">
+                          <span class="detail-label">Price:</span>
+                          <span class="detail-value">${this.selectedProperty.price}</span>
+                        </div>
+                      ` : ''}
+
+                      ${this.selectedProperty.size ? html`
+                        <div class="detail-row">
+                          <span class="detail-label">Size:</span>
+                          <span class="detail-value">${this.selectedProperty.size}</span>
+                        </div>
+                      ` : ''}
+
+                      ${this.selectedProperty.availableDate ? html`
+                        <div class="detail-row">
+                          <span class="detail-label">Available:</span>
+                          <span class="detail-value">${this.selectedProperty.availableDate}</span>
+                        </div>
+                      ` : ''}
+                    </div>
+
+                    ${this.selectedProperty.summary ? html`
+                      <div class="property-summary-section">
+                        <h3>Description</h3>
+                        <p>${this.selectedProperty.summary}</p>
+                      </div>
+                    ` : ''}
+
+                    <div class="property-contact-info">
+                      <h3>Contact Information</h3>
+                      ${this.selectedProperty.broker && this.selectedProperty.broker !== 'Contact broker' ? html`
+                        <div class="contact-row">
+                          <strong>Broker:</strong> ${this.selectedProperty.broker}
+                        </div>
+                      ` : ''}
+                      ${this.selectedProperty.propertyManager ? html`
+                        <div class="contact-row">
+                          <strong>Company:</strong> ${this.selectedProperty.propertyManager}
+                        </div>
+                      ` : ''}
+                      ${this.selectedProperty.contactPhone && this.selectedProperty.contactPhone !== 'Call for details' ? html`
+                        <div class="contact-row">
+                          <strong>Phone:</strong>
+                          <a href="tel:${this.selectedProperty.contactPhone.replace(/[^0-9+]/g, '')}">${this.selectedProperty.contactPhone}</a>
+                        </div>
+                      ` : ''}
+                      ${this.selectedProperty.contactEmail ? html`
+                        <div class="contact-row">
+                          <strong>Email:</strong>
+                          <a href="mailto:${this.selectedProperty.contactEmail}">${this.selectedProperty.contactEmail}</a>
+                        </div>
+                      ` : ''}
+                      ${this.selectedProperty.website ? html`
+                        <div class="contact-row">
+                          <strong>Website:</strong>
+                          <a href="${this.selectedProperty.website}" target="_blank" rel="noopener">View Listing →</a>
+                        </div>
+                      ` : ''}
+                      ${!this.selectedProperty.broker && !this.selectedProperty.propertyManager &&
+                        !this.selectedProperty.contactPhone && !this.selectedProperty.contactEmail &&
+                        !this.selectedProperty.website ? html`
+                        <div class="contact-row">
+                          <em>Contact information not available for this property</em>
+                        </div>
+                      ` : ''}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ` : ''}
           </div>
         </main>
       </div>

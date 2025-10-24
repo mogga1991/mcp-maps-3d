@@ -1,0 +1,47 @@
+{
+  "mcpServers": {
+    "neon-postgres": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@neondatabase/mcp-server-neon"],
+      "env": {
+        "NEON_API_KEY": "your_neon_api_key_here"
+      },
+      "description": "Neon PostgreSQL database MCP server - Enables direct database queries, schema inspection, and branch management"
+    },
+    "supabase": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@supabase-community/supabase-mcp"],
+      "env": {
+        "SUPABASE_URL": "your_supabase_url_here",
+        "SUPABASE_ANON_KEY": "your_supabase_anon_key_here"
+      },
+      "description": "Supabase MCP server - Access storage buckets, view logs, and manage cloud resources"
+    },
+    "apify": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@apify/actors-mcp-server",
+        "--tools",
+        "actors,docs"
+      ],
+      "env": {
+        "APIFY_TOKEN": "your_apify_api_token_here"
+      },
+      "description": "Apify MCP server - Access commercial real estate scrapers (LoopNet, Crexi) and web automation tools"
+    },
+    "postgres-direct": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://username:password@hostname.neon.tech/database?sslmode=require"
+      ],
+      "description": "Direct PostgreSQL connection (alternative to Neon MCP) - Read-only database access"
+    }
+  }
+}

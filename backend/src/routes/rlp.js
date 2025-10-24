@@ -3,6 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs/promises';
 import { processPDF } from '../services/pdfProcessor.js';
+import { searchProperties } from '../services/propertySearch.js';
 import { supabase } from '../config/supabase.js';
 import { sql } from '../config/database.js';
 
@@ -210,6 +211,52 @@ router.get('/', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to list documents',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/rlp/:id/search
+ * Search for properties matching the RLP requirements
+ */
+router.post('/:id/search', async (req, res) => {
+  try {
+    const documentId = parseInt(req.params.id);
+
+    // Get the RLP document from database
+    if (!sql) {
+      return res.status(503).json({ error: 'Database not configured' });
+    }
+
+    const result = await sql`
+      SELECT requirements FROM rlp_documents WHERE id = ${documentId}
+    `;
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'RLP document not found' });
+    }
+
+    const requirements = result[0].requirements;
+    console.log(`🔍 Searching properties for RLP document ${documentId}`);
+
+    // Search for properties using the requirements
+    const properties = await searchProperties(requirements);
+
+    res.json({
+      success: true,
+      data: {
+        documentId,
+        properties,
+        count: properties.length
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Property search error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to search properties',
       message: error.message
     });
   }

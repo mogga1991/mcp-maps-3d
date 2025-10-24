@@ -23,6 +23,9 @@ import {z} from 'zod';
 // Schema for a single property result
 const propertySchema = z.object({
   name: z.string().describe('The name or address of the property.'),
+  address: z.string().optional().describe('Full street address of the property.'),
+  city: z.string().optional().describe('City where the property is located.'),
+  state: z.string().optional().describe('State where the property is located.'),
   price: z.string().optional().describe('The price of the property (e.g., $25/sq ft/year).'),
   size: z.string().optional().describe('The size of the property (e.g., 7,500 sq ft).'),
   summary: z
@@ -40,6 +43,7 @@ const propertySchema = z.object({
   // Additional details
   availableDate: z.string().optional().describe('When the property becomes available.'),
   propertyType: z.string().optional().describe('Type of property (e.g., Office, Warehouse, Mixed Use).'),
+  images: z.array(z.string()).optional().describe('Array of image URLs for the property.'),
 });
 
 export type Property = z.infer<typeof propertySchema>;

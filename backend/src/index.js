@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import rlpRoutes from './routes/rlp.js';
+import { initDatabase } from './config/database.js';
 
 dotenv.config();
 
@@ -28,7 +29,14 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`📁 Health check: http://localhost:${PORT}/health`);
+
+  // Initialize database schema
+  try {
+    await initDatabase();
+  } catch (error) {
+    console.error('⚠️  Database initialization failed:', error.message);
+  }
 });
