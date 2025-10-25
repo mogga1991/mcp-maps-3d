@@ -289,6 +289,9 @@ export class MapApp extends LitElement {
   @state() isInitialState = true;
   @state() public rlpRequirements: any = null;
   @state() private selectedProperty: Property | null = null;
+  @state() private mobileDetailProperty: Property | null = null;
+  @state() private currentProperties: Property[] = [];
+  @state() private isMobile: boolean = false;
 
   // Google Maps: Instance of the Google Maps 3D map.
   private map?: any;
@@ -319,10 +322,108 @@ export class MapApp extends LitElement {
     super();
     // Allows `this` to be correct in InfoWindow event handlers
     (window as any).app = this;
+
+    // Initialize mobile state
+    this.updateMobileState();
+
+    // Listen for window resize to update mobile state
+    window.addEventListener('resize', () => this.updateMobileState());
   }
 
   createRenderRoot() {
     return this;
+  }
+
+  /**
+   * Update mobile state based on current window width
+   */
+  private updateMobileState() {
+    this.isMobile = window.innerWidth <= 900;
+  }
+
+  /**
+   * Check if we're on a mobile device based on screen width
+   */
+  private isMobileView(): boolean {
+    return this.isMobile;
+  }
+
+  /**
+   * Add property cards to the chat on mobile
+   */
+  private addPropertyCardsToChat(properties: Property[]) {
+    if (!this.isMobile || properties.length === 0) return;
+
+    const cardsHtml = `
+      <div class="chat-property-cards-container">
+        ${properties.map(prop => this.createPropertyCardHtml(prop)).join('')}
+      </div>
+    `;
+
+    const {textElement} = this.addMessage('assistant', cardsHtml);
+
+    // Add click handlers to cards after they're rendered
+    setTimeout(() => {
+      properties.forEach((prop, index) => {
+        const card = document.querySelectorAll('.chat-property-card')[index];
+        if (card) {
+          card.addEventListener('click', () => {
+            this.mobileDetailProperty = prop;
+          });
+        }
+      });
+    }, 100);
+  }
+
+  /**
+   * Create HTML for a single property card in chat
+   */
+  private createPropertyCardHtml(prop: Property): string {
+    const imageUrl = prop.images && prop.images.length > 0 ? prop.images[0] : '';
+
+    return `
+      <div class="chat-property-card">
+        ${imageUrl ? `
+          <img src="${imageUrl}" alt="${prop.name}" class="chat-property-card-image"
+               onerror="this.style.display='none'" />
+        ` : `
+          <div class="chat-property-card-image"></div>
+        `}
+        <div class="chat-property-card-content">
+          <div class="chat-property-card-header">
+            <h4 class="chat-property-card-title">${prop.name}</h4>
+            ${prop.propertyType ? `
+              <span class="chat-property-card-badge">${prop.propertyType}</span>
+            ` : ''}
+          </div>
+          <div class="chat-property-card-details">
+            ${prop.price ? `
+              <div class="chat-property-detail-row">
+                <span class="chat-property-detail-label">Price</span>
+                <span class="chat-property-detail-value">${prop.price}</span>
+              </div>
+            ` : ''}
+            ${prop.size ? `
+              <div class="chat-property-detail-row">
+                <span class="chat-property-detail-label">Size</span>
+                <span class="chat-property-detail-value">${prop.size}</span>
+              </div>
+            ` : ''}
+          </div>
+          ${prop.summary ? `
+            <p class="chat-property-card-summary">${prop.summary}</p>
+          ` : ''}
+          <div class="chat-property-card-footer">
+            <span class="chat-property-view-details">
+              View Details →
+            </span>
+            <div class="chat-property-save-icon">
+              ${ICON_HEART_OUTLINE.strings.join('')}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   protected firstUpdated(
@@ -339,6 +440,13 @@ export class MapApp extends LitElement {
    * Handles API key validation and error reporting.
    */
   async loadMap() {
+    // Skip loading Google Maps on mobile
+    if (this.isMobile) {
+      console.log('Mobile view detected - skipping Google Maps initialization');
+      this.mapInitialized = false;
+      return;
+    }
+
     const isApiKeyPlaceholder =
       USER_PROVIDED_GOOGLE_MAPS_API_KEY ===
         'YOUR_ACTUAL_GOOGLE_MAPS_API_KEY_REPLACE_ME' ||
@@ -573,9 +681,20 @@ You can find this constant near the top of the map_app.ts file.`;
 
   private async _displayPropertyResults(properties: Property[]) {
     this._clearMapElements('results');
-    if (!this.Marker3DElement || !this.map) return;
 
     if (properties.length === 0) return;
+
+    // Store properties for later use
+    this.currentProperties = properties;
+
+    // On mobile, show property cards in chat instead of markers
+    if (this.isMobile) {
+      this.addPropertyCardsToChat(properties);
+      return;
+    }
+
+    // Desktop: show markers on map
+    if (!this.Marker3DElement || !this.map) return;
 
     const bounds = new (window as any).google.maps.LatLngBounds();
 
@@ -1075,6 +1194,55 @@ You can find this constant near the top of the map_app.ts file.`;
     }
   }
 
+  /**
+   * Detect MIME type from file extension as fallback
+   */
+  private _getMimeType(file: File): string {
+    // Log for debugging
+    console.log(`Detecting MIME type for file: ${file.name}, browser type: "${file.type}"`);
+
+    // Try to use the browser's detected type first, but only if it's valid
+    if (file.type && file.type.trim() !== '' && file.type !== 'application/octet-stream') {
+      console.log(`Using browser-detected MIME type: ${file.type}`);
+      return file.type;
+    }
+
+    // Fallback: detect from file extension
+    const nameParts = file.name.split('.');
+    if (nameParts.length < 2) {
+      console.warn(`File "${file.name}" has no extension, defaulting to text/plain`);
+      return 'text/plain';
+    }
+
+    const extension = nameParts[nameParts.length - 1]?.toLowerCase();
+    const mimeTypes: Record<string, string> = {
+      pdf: 'application/pdf',
+      txt: 'text/plain',
+      md: 'text/markdown',
+      markdown: 'text/markdown',
+      json: 'application/json',
+      csv: 'text/csv',
+      rtf: 'application/rtf',
+      doc: 'application/msword',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      xls: 'application/vnd.ms-excel',
+      xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      html: 'text/html',
+      htm: 'text/html',
+      rls: 'text/plain',
+      rlp: 'text/plain',
+      png: 'image/png',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      gif: 'image/gif',
+      webp: 'image/webp',
+    };
+
+    const detectedType = mimeTypes[extension] || 'text/plain';
+    console.log(`Detected MIME type from extension "${extension}": ${detectedType}`);
+    return detectedType;
+  }
+
   private async _processQueuedFiles() {
     const files = [...this.queuedFiles];
     const fileCount = files.length;
@@ -1111,12 +1279,20 @@ You can find this constant near the top of the map_app.ts file.`;
         }
         return {
           name: file.name,
-          mimeType: file.type,
+          mimeType: this._getMimeType(file),
           data: btoa(binary)
         };
       });
 
       const processedFiles = await Promise.all(filePromises);
+
+      // Validate all files have valid MIME types
+      console.log('Processed files:', processedFiles.map(f => ({name: f.name, mimeType: f.mimeType, dataLength: f.data.length})));
+
+      const invalidFiles = processedFiles.filter(f => !f.mimeType || f.mimeType.trim() === '');
+      if (invalidFiles.length > 0) {
+        throw new Error(`Invalid MIME type detected for files: ${invalidFiles.map(f => f.name).join(', ')}`);
+      }
 
       // Send all files to AI for comprehensive analysis
       const filesText = files.map(f => f.name).join(', ');
@@ -1591,171 +1767,297 @@ Remember: This is for a competitive government contract. Missing ANY requirement
             aria-labelledby="chat-heading">
             ${this.activeView === 'chat' ? chatView : savedPropertiesView}
           </div>
-          <div
-            class="map-panel"
-            role="application"
-            aria-label="Interactive Map Area">
-            ${this.mapError
-              ? html`<div
-                  class="map-error-message"
-                  role="alert"
-                  aria-live="assertive"
-                  >${this.mapError}</div
-                >`
-              : ''}
-            <div class="map-layer-control">
-              <button
-                class="map-layer-toggle-button"
-                @click=${() => (this.showLayerControl = !this.showLayerControl)}
-                title="Map Layers">
-                ${ICON_LAYERS}
-              </button>
-              ${this.showLayerControl
-                ? html`
-                    <div class="layer-options">
-                      <h4>Map Type</h4>
-                      <label>
-                        <input
-                          type="radio"
-                          name="map-mode"
-                          value="hybrid"
-                          .checked=${this.mapMode === 'hybrid'}
-                          @change=${() => (this.mapMode = 'hybrid')} />
-                        Satellite
-                      </label>
-                      <label>
-                        <input
-                          type="radio"
-                          name="map-mode"
-                          value="roadmap"
-                          .checked=${this.mapMode === 'roadmap'}
-                          @change=${() => (this.mapMode = 'roadmap')} />
-                        Roadmap
-                      </label>
-                    </div>
-                  `
+
+          <!-- Only render map on desktop (>900px) -->
+          ${!this.isMobile ? html`
+            <div
+              class="map-panel"
+              role="application"
+              aria-label="Interactive Map Area">
+              ${this.mapError
+                ? html`<div
+                    class="map-error-message"
+                    role="alert"
+                    aria-live="assertive"
+                    >${this.mapError}</div
+                  >`
                 : ''}
-            </div>
-            <!-- Google Maps: The core 3D Map custom element -->
-            <gmp-map-3d
-              id="mapContainer"
-              aria-label="Google Photorealistic 3D Map Display"
-              mode="${this.mapMode}"
-              center="${initialCenter}"
-              heading="${initialHeading}"
-              tilt="${initialTilt}"
-              range="${initialRange}"
-              max-range="${maxRange}"
-              internal-usage-attribution-ids="gmp_aistudio_threedmapjsmcp_v0.1_showcase"
-              default-ui-hidden="true"
-              role="application">
-            </gmp-map-3d>
-
-            <!-- Property Card Overlay -->
-            ${this.selectedProperty ? html`
-              <div class="property-card-overlay" @click=${() => this.selectedProperty = null}>
-                <div class="property-card-container" @click=${(e: Event) => e.stopPropagation()}>
-                  ${this.selectedProperty.images && this.selectedProperty.images.length > 0 ? html`
-                    <div class="property-card-images">
-                      <img src="${this.selectedProperty.images[0]}" alt="${this.selectedProperty.name}"
-                           onerror="this.style.display='none'" />
-                    </div>
-                  ` : ''}
-
-                  <div class="property-card-content">
-                    <div class="property-card-header-row">
-                      <h2>${this.selectedProperty.name}</h2>
-                      <div class="card-header-buttons">
-                        <button
-                          class="save-property-button ${this._isPropertySaved(this.selectedProperty) ? 'saved' : ''}"
-                          @click=${() => this._handleSaveProperty(this.selectedProperty)}
-                          title="${this._isPropertySaved(this.selectedProperty) ? 'Unsave property' : 'Save property'}">
-                          ${this._isPropertySaved(this.selectedProperty) ? ICON_HEART_FILLED : ICON_HEART_OUTLINE}
-                        </button>
-                        <button class="close-card-button" @click=${() => this.selectedProperty = null}>
-                          ✕
-                        </button>
+              <div class="map-layer-control">
+                <button
+                  class="map-layer-toggle-button"
+                  @click=${() => (this.showLayerControl = !this.showLayerControl)}
+                  title="Map Layers">
+                  ${ICON_LAYERS}
+                </button>
+                ${this.showLayerControl
+                  ? html`
+                      <div class="layer-options">
+                        <h4>Map Type</h4>
+                        <label>
+                          <input
+                            type="radio"
+                            name="map-mode"
+                            value="hybrid"
+                            .checked=${this.mapMode === 'hybrid'}
+                            @change=${() => (this.mapMode = 'hybrid')} />
+                          Satellite
+                        </label>
+                        <label>
+                          <input
+                            type="radio"
+                            name="map-mode"
+                            value="roadmap"
+                            .checked=${this.mapMode === 'roadmap'}
+                            @change=${() => (this.mapMode = 'roadmap')} />
+                          Roadmap
+                        </label>
                       </div>
-                    </div>
+                    `
+                  : ''}
+              </div>
+              <!-- Google Maps: The core 3D Map custom element -->
+              <gmp-map-3d
+                id="mapContainer"
+                aria-label="Google Photorealistic 3D Map Display"
+                mode="${this.mapMode}"
+                center="${initialCenter}"
+                heading="${initialHeading}"
+                tilt="${initialTilt}"
+                range="${initialRange}"
+                max-range="${maxRange}"
+                internal-usage-attribution-ids="gmp_aistudio_threedmapjsmcp_v0.1_showcase"
+                default-ui-hidden="true"
+                role="application">
+              </gmp-map-3d>
 
-                    ${this.selectedProperty.propertyType ? html`
-                      <div class="property-type-badge-large">${this.selectedProperty.propertyType}</div>
-                    ` : ''}
-
-                    <div class="property-card-details">
-                      ${this.selectedProperty.price ? html`
-                        <div class="detail-row">
-                          <span class="detail-label">Price:</span>
-                          <span class="detail-value">${this.selectedProperty.price}</span>
-                        </div>
-                      ` : ''}
-
-                      ${this.selectedProperty.size ? html`
-                        <div class="detail-row">
-                          <span class="detail-label">Size:</span>
-                          <span class="detail-value">${this.selectedProperty.size}</span>
-                        </div>
-                      ` : ''}
-
-                      ${this.selectedProperty.availableDate ? html`
-                        <div class="detail-row">
-                          <span class="detail-label">Available:</span>
-                          <span class="detail-value">${this.selectedProperty.availableDate}</span>
-                        </div>
-                      ` : ''}
-                    </div>
-
-                    ${this.selectedProperty.summary ? html`
-                      <div class="property-summary-section">
-                        <h3>Description</h3>
-                        <p>${this.selectedProperty.summary}</p>
+              <!-- Property Card Overlay (Desktop only) -->
+              ${this.selectedProperty ? html`
+                <div class="property-card-overlay" @click=${() => this.selectedProperty = null}>
+                  <div class="property-card-container" @click=${(e: Event) => e.stopPropagation()}>
+                    ${this.selectedProperty.images && this.selectedProperty.images.length > 0 ? html`
+                      <div class="property-card-images">
+                        <img src="${this.selectedProperty.images[0]}" alt="${this.selectedProperty.name}"
+                             onerror="this.style.display='none'" />
                       </div>
                     ` : ''}
 
-                    <div class="property-contact-info">
-                      <h3>Contact Information</h3>
-                      ${this.selectedProperty.broker && this.selectedProperty.broker !== 'Contact broker' ? html`
-                        <div class="contact-row">
-                          <strong>Broker:</strong> ${this.selectedProperty.broker}
+                    <div class="property-card-content">
+                      <div class="property-card-header-row">
+                        <h2>${this.selectedProperty.name}</h2>
+                        <div class="card-header-buttons">
+                          <button
+                            class="save-property-button ${this._isPropertySaved(this.selectedProperty) ? 'saved' : ''}"
+                            @click=${() => this._handleSaveProperty(this.selectedProperty)}
+                            title="${this._isPropertySaved(this.selectedProperty) ? 'Unsave property' : 'Save property'}">
+                            ${this._isPropertySaved(this.selectedProperty) ? ICON_HEART_FILLED : ICON_HEART_OUTLINE}
+                          </button>
+                          <button class="close-card-button" @click=${() => this.selectedProperty = null}>
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+
+                      ${this.selectedProperty.propertyType ? html`
+                        <div class="property-type-badge-large">${this.selectedProperty.propertyType}</div>
+                      ` : ''}
+
+                      <div class="property-card-details">
+                        ${this.selectedProperty.price ? html`
+                          <div class="detail-row">
+                            <span class="detail-label">Price:</span>
+                            <span class="detail-value">${this.selectedProperty.price}</span>
+                          </div>
+                        ` : ''}
+
+                        ${this.selectedProperty.size ? html`
+                          <div class="detail-row">
+                            <span class="detail-label">Size:</span>
+                            <span class="detail-value">${this.selectedProperty.size}</span>
+                          </div>
+                        ` : ''}
+
+                        ${this.selectedProperty.availableDate ? html`
+                          <div class="detail-row">
+                            <span class="detail-label">Available:</span>
+                            <span class="detail-value">${this.selectedProperty.availableDate}</span>
+                          </div>
+                        ` : ''}
+                      </div>
+
+                      ${this.selectedProperty.summary ? html`
+                        <div class="property-summary-section">
+                          <h3>Description</h3>
+                          <p>${this.selectedProperty.summary}</p>
                         </div>
                       ` : ''}
-                      ${this.selectedProperty.propertyManager ? html`
-                        <div class="contact-row">
-                          <strong>Company:</strong> ${this.selectedProperty.propertyManager}
-                        </div>
-                      ` : ''}
-                      ${this.selectedProperty.contactPhone && this.selectedProperty.contactPhone !== 'Call for details' ? html`
-                        <div class="contact-row">
-                          <strong>Phone:</strong>
-                          <a href="tel:${this.selectedProperty.contactPhone.replace(/[^0-9+]/g, '')}">${this.selectedProperty.contactPhone}</a>
-                        </div>
-                      ` : ''}
-                      ${this.selectedProperty.contactEmail ? html`
-                        <div class="contact-row">
-                          <strong>Email:</strong>
-                          <a href="mailto:${this.selectedProperty.contactEmail}">${this.selectedProperty.contactEmail}</a>
-                        </div>
-                      ` : ''}
-                      ${this.selectedProperty.website ? html`
-                        <div class="contact-row">
-                          <strong>Website:</strong>
-                          <a href="${this.selectedProperty.website}" target="_blank" rel="noopener">View Listing →</a>
-                        </div>
-                      ` : ''}
-                      ${!this.selectedProperty.broker && !this.selectedProperty.propertyManager &&
-                        !this.selectedProperty.contactPhone && !this.selectedProperty.contactEmail &&
-                        !this.selectedProperty.website ? html`
-                        <div class="contact-row">
-                          <em>Contact information not available for this property</em>
-                        </div>
-                      ` : ''}
+
+                      <div class="property-contact-info">
+                        <h3>Contact Information</h3>
+                        ${this.selectedProperty.broker && this.selectedProperty.broker !== 'Contact broker' ? html`
+                          <div class="contact-row">
+                            <strong>Broker:</strong> ${this.selectedProperty.broker}
+                          </div>
+                        ` : ''}
+                        ${this.selectedProperty.propertyManager ? html`
+                          <div class="contact-row">
+                            <strong>Company:</strong> ${this.selectedProperty.propertyManager}
+                          </div>
+                        ` : ''}
+                        ${this.selectedProperty.contactPhone && this.selectedProperty.contactPhone !== 'Call for details' ? html`
+                          <div class="contact-row">
+                            <strong>Phone:</strong>
+                            <a href="tel:${this.selectedProperty.contactPhone.replace(/[^0-9+]/g, '')}">${this.selectedProperty.contactPhone}</a>
+                          </div>
+                        ` : ''}
+                        ${this.selectedProperty.contactEmail ? html`
+                          <div class="contact-row">
+                            <strong>Email:</strong>
+                            <a href="mailto:${this.selectedProperty.contactEmail}">${this.selectedProperty.contactEmail}</a>
+                          </div>
+                        ` : ''}
+                        ${this.selectedProperty.website ? html`
+                          <div class="contact-row">
+                            <strong>Website:</strong>
+                            <a href="${this.selectedProperty.website}" target="_blank" rel="noopener">View Listing →</a>
+                          </div>
+                        ` : ''}
+                        ${!this.selectedProperty.broker && !this.selectedProperty.propertyManager &&
+                          !this.selectedProperty.contactPhone && !this.selectedProperty.contactEmail &&
+                          !this.selectedProperty.website ? html`
+                          <div class="contact-row">
+                            <em>Contact information not available for this property</em>
+                          </div>
+                        ` : ''}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            ` : ''}
-          </div>
+              ` : ''}
+            </div>
+          ` : ''}
         </main>
+
+        <!-- Mobile Property Detail Modal -->
+        ${this.mobileDetailProperty ? html`
+          <div class="mobile-property-modal">
+            <div class="mobile-property-modal-header">
+              <button class="mobile-modal-back-button" @click=${() => this.mobileDetailProperty = null}>
+                ← Back
+              </button>
+              <div class="mobile-modal-title">Property Details</div>
+              <div class="mobile-modal-actions">
+                <button
+                  class="mobile-modal-save-button ${this._isPropertySaved(this.mobileDetailProperty) ? 'saved' : ''}"
+                  @click=${() => this._handleSaveProperty(this.mobileDetailProperty!)}>
+                  ${this._isPropertySaved(this.mobileDetailProperty) ? ICON_HEART_FILLED : ICON_HEART_OUTLINE}
+                </button>
+              </div>
+            </div>
+
+            <div class="mobile-property-modal-content">
+              ${this.mobileDetailProperty.images && this.mobileDetailProperty.images.length > 0 ? html`
+                <img
+                  src="${this.mobileDetailProperty.images[0]}"
+                  alt="${this.mobileDetailProperty.name}"
+                  class="mobile-property-modal-image"
+                  @error=${(e: Event) => (e.target as HTMLElement).style.display = 'none'}
+                />
+              ` : html`
+                <div class="mobile-property-modal-image"></div>
+              `}
+
+              <div class="mobile-property-modal-body">
+                <h2 style="margin: 0 0 16px 0; font-size: 22px; font-weight: 700; color: var(--color-text-primary);">
+                  ${this.mobileDetailProperty.name}
+                </h2>
+
+                ${this.mobileDetailProperty.propertyType ? html`
+                  <div style="display: inline-block; padding: 6px 14px; background: var(--color-primary); color: white; border-radius: 16px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 20px;">
+                    ${this.mobileDetailProperty.propertyType}
+                  </div>
+                ` : ''}
+
+                <div class="mobile-property-section">
+                  <h3>Details</h3>
+                  <div class="mobile-property-detail-grid">
+                    ${this.mobileDetailProperty.price ? html`
+                      <div class="mobile-detail-row">
+                        <span class="mobile-detail-label">Price</span>
+                        <span class="mobile-detail-value">${this.mobileDetailProperty.price}</span>
+                      </div>
+                    ` : ''}
+                    ${this.mobileDetailProperty.size ? html`
+                      <div class="mobile-detail-row">
+                        <span class="mobile-detail-label">Size</span>
+                        <span class="mobile-detail-value">${this.mobileDetailProperty.size}</span>
+                      </div>
+                    ` : ''}
+                    ${this.mobileDetailProperty.availableDate ? html`
+                      <div class="mobile-detail-row">
+                        <span class="mobile-detail-label">Available</span>
+                        <span class="mobile-detail-value">${this.mobileDetailProperty.availableDate}</span>
+                      </div>
+                    ` : ''}
+                  </div>
+                </div>
+
+                ${this.mobileDetailProperty.summary ? html`
+                  <div class="mobile-property-section">
+                    <h3>Description</h3>
+                    <p class="mobile-property-summary-text">${this.mobileDetailProperty.summary}</p>
+                  </div>
+                ` : ''}
+
+                <div class="mobile-property-section">
+                  <h3>Contact Information</h3>
+                  ${this.mobileDetailProperty.broker && this.mobileDetailProperty.broker !== 'Contact broker' ? html`
+                    <div class="mobile-contact-item">
+                      <strong>Broker</strong>
+                      <span>${this.mobileDetailProperty.broker}</span>
+                    </div>
+                  ` : ''}
+                  ${this.mobileDetailProperty.propertyManager ? html`
+                    <div class="mobile-contact-item">
+                      <strong>Company</strong>
+                      <span>${this.mobileDetailProperty.propertyManager}</span>
+                    </div>
+                  ` : ''}
+                  ${this.mobileDetailProperty.contactPhone && this.mobileDetailProperty.contactPhone !== 'Call for details' ? html`
+                    <div class="mobile-contact-item">
+                      <strong>Phone</strong>
+                      <a href="tel:${this.mobileDetailProperty.contactPhone.replace(/[^0-9+]/g, '')}">
+                        ${this.mobileDetailProperty.contactPhone}
+                      </a>
+                    </div>
+                  ` : ''}
+                  ${this.mobileDetailProperty.contactEmail ? html`
+                    <div class="mobile-contact-item">
+                      <strong>Email</strong>
+                      <a href="mailto:${this.mobileDetailProperty.contactEmail}">
+                        ${this.mobileDetailProperty.contactEmail}
+                      </a>
+                    </div>
+                  ` : ''}
+                  ${this.mobileDetailProperty.website ? html`
+                    <div class="mobile-contact-item">
+                      <strong>Website</strong>
+                      <a href="${this.mobileDetailProperty.website}" target="_blank" rel="noopener">
+                        View Listing →
+                      </a>
+                    </div>
+                  ` : ''}
+                  ${!this.mobileDetailProperty.broker && !this.mobileDetailProperty.propertyManager &&
+                    !this.mobileDetailProperty.contactPhone && !this.mobileDetailProperty.contactEmail &&
+                    !this.mobileDetailProperty.website ? html`
+                    <div class="mobile-contact-item">
+                      <em style="color: var(--color-text-secondary);">Contact information not available</em>
+                    </div>
+                  ` : ''}
+                </div>
+              </div>
+            </div>
+          </div>
+        ` : ''}
       </div>
     `;
   }

@@ -191,11 +191,20 @@ document.addEventListener('DOMContentLoaded', async (event) => {
             },
           });
 
+          // Build message parts: text first, then each file as a separate inlineData part
+          const messageParts: any[] = [{text: input.text}];
+
+          // Add each file as a separate part
+          if (Array.isArray(input.inlineData)) {
+            for (const fileData of input.inlineData) {
+              messageParts.push({inlineData: fileData});
+            }
+          } else {
+            messageParts.push({inlineData: input.inlineData});
+          }
+
           const stream = await pdfChat.sendMessageStream({
-            message: [
-              {text: input.text},
-              {inlineData: input.inlineData}
-            ]
+            message: messageParts
           });
 
           for await (const chunk of stream) {
@@ -248,12 +257,21 @@ document.addEventListener('DOMContentLoaded', async (event) => {
           }
         } else {
           // Normal text message handling with tools enabled
-          const messagePayload = typeof input === 'string'
-            ? {message: input}
-            : {message: [
-                {text: input.text},
-                {inlineData: input.inlineData}
-              ]};
+          let messagePayload;
+          if (typeof input === 'string') {
+            messagePayload = {message: input};
+          } else {
+            // Build message parts properly for files
+            const messageParts: any[] = [{text: input.text}];
+            if (Array.isArray(input.inlineData)) {
+              for (const fileData of input.inlineData) {
+                messageParts.push({inlineData: fileData});
+              }
+            } else {
+              messageParts.push({inlineData: input.inlineData});
+            }
+            messagePayload = {message: messageParts};
+          }
 
           const stream = await aiChat.sendMessageStream(messagePayload);
 

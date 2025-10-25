@@ -14,6 +14,10 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Inconsolata:wght@200..900&display=swap');
 
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -1050,26 +1054,371 @@ pre {
   color: var(--color-text-secondary);
 }
 
-/* Responsive design */
+/* =====================================================
+   Property Cards in Chat (Mobile)
+   ===================================================== */
+
+.chat-property-cards-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+  width: 100%;
+}
+
+.chat-property-card {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.chat-property-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.15);
+  border-color: var(--color-primary);
+}
+
+.chat-property-card:active {
+  transform: scale(0.98);
+}
+
+.chat-property-card-image {
+  width: 100%;
+  height: 160px;
+  object-fit: cover;
+  background: var(--color-bg-tertiary);
+}
+
+.chat-property-card-content {
+  padding: 14px;
+}
+
+.chat-property-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 10px;
+  gap: 8px;
+}
+
+.chat-property-card-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1.3;
+  flex: 1;
+  margin: 0;
+}
+
+.chat-property-card-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  background: var(--color-primary);
+  color: white;
+  border-radius: 12px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.chat-property-card-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.chat-property-detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+}
+
+.chat-property-detail-label {
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
+.chat-property-detail-value {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.chat-property-card-summary {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.chat-property-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 10px;
+  margin-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
+.chat-property-view-details {
+  font-size: 13px;
+  color: var(--color-primary);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chat-property-save-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-bg-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  transition: all 0.2s ease;
+}
+
+.chat-property-card:hover .chat-property-save-icon {
+  background: var(--color-primary);
+  color: white;
+}
+
+/* Mobile Property Detail Modal */
+.mobile-property-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--color-bg-primary);
+  z-index: 9999;
+  overflow-y: auto;
+  animation: slideInUp 0.3s ease;
+}
+
+@keyframes slideInUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.mobile-property-modal-header {
+  position: sticky;
+  top: 0;
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border);
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 10;
+}
+
+.mobile-modal-back-button {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mobile-modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  flex: 1;
+  text-align: center;
+  padding: 0 8px;
+}
+
+.mobile-modal-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.mobile-modal-save-button {
+  background: var(--color-primary);
+  border: none;
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mobile-modal-save-button.saved {
+  background: var(--color-accent-red);
+}
+
+.mobile-property-modal-content {
+  padding-bottom: 24px;
+}
+
+.mobile-property-modal-image {
+  width: 100%;
+  height: 250px;
+  object-fit: cover;
+  background: var(--color-bg-tertiary);
+}
+
+.mobile-property-modal-body {
+  padding: 20px;
+}
+
+.mobile-property-section {
+  margin-bottom: 24px;
+}
+
+.mobile-property-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+
+.mobile-property-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.mobile-detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: var(--color-bg-tertiary);
+  border-radius: 8px;
+}
+
+.mobile-detail-label {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
+.mobile-detail-value {
+  font-size: 14px;
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.mobile-property-summary-text {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.mobile-contact-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: var(--color-bg-tertiary);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.mobile-contact-item strong {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
+.mobile-contact-item a,
+.mobile-contact-item span {
+  font-size: 14px;
+  color: var(--color-primary);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.mobile-contact-item span {
+  color: var(--color-text-primary);
+}
+
+/* Responsive design - Mobile-First AI Chat */
 @media only screen and (max-width: 900px) {
+  .gdm-map-app {
+    flex-direction: column;
+  }
+
   .main-content {
     flex-direction: column;
-    padding: 8px;
-    gap: 8px;
+    padding: 0;
+    gap: 0;
   }
+
+  /* Chat takes full screen on mobile (map not rendered at all) */
   .interaction-panel {
     width: 100%;
-    height: 50%;
+    height: 100vh;
     min-width: unset;
+    border-radius: 0;
+    box-shadow: none;
   }
-  .map-panel {
-    height: 50%;
-  }
+
+  /* Hide sidebar on mobile */
   .app-sidebar {
     display: none;
   }
+
+  /* Mobile header */
+  .panel-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg-secondary);
+  }
+
+  /* Mobile chat messages */
+  .chat-messages {
+    padding: 12px;
+  }
+
+  /* Mobile input area */
+  .footer {
+    padding: 12px;
+    background: var(--color-bg-secondary);
+    border-top: 1px solid var(--color-border);
+  }
+
+  /* Saved properties mobile view */
   .saved-property-content {
     flex-direction: column;
+  }
+
+  /* Hide filters button on mobile */
+  .filters-button {
+    display: none;
   }
 }
 
