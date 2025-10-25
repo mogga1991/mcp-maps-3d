@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { supabase } from '../../lib/supabase';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -13,6 +14,11 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   onUnauthenticated
 }) => {
   const { user, loading } = useAuth();
+
+  // If Supabase is not configured, bypass authentication
+  if (!supabase) {
+    return <>{children}</>;
+  }
 
   useEffect(() => {
     if (!loading && !user && onUnauthenticated) {

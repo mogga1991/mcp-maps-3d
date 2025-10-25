@@ -32,6 +32,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
+
     // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -52,6 +57,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, []);
 
   const signIn = async (email: string, password: string) => {
+    if (!supabase) {
+      return { error: new Error('Supabase is not configured') as AuthError };
+    }
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -60,6 +68,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const signUp = async (email: string, password: string, metadata?: { fullName?: string }) => {
+    if (!supabase) {
+      return { error: new Error('Supabase is not configured') as AuthError };
+    }
     const { error } = await supabase.auth.signUp({
       email,
       password,
@@ -73,10 +84,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const signOut = async () => {
+    if (!supabase) return;
     await supabase.auth.signOut();
   };
 
   const signInWithGoogle = async () => {
+    if (!supabase) {
+      return { error: new Error('Supabase is not configured') as AuthError };
+    }
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
